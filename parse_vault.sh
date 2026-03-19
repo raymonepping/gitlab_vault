@@ -13,6 +13,9 @@ OPERATION=""
 TOP_N=""
 TIMELINE="false"
 LATEST_ONLY="false"
+SINCE=""
+UNTIL=""
+DATE_ONLY=""
 
 usage() {
   cat <<'EOF'
@@ -27,8 +30,11 @@ Options:
   --path-prefix <prefix>            Keep only events whose path starts with prefix
   --exclude-path-prefix <prefix>    Exclude events whose path starts with prefix
   --operation <op>                  Keep only events for an exact Vault operation
+  --since <timestamp>               Keep only events at or after this UTC timestamp
+  --until <timestamp>               Keep only events at or before this UTC timestamp
+  --date <YYYY-MM-DD>               Keep only events on this UTC date
   --top <n>                         Show top N human identities by access count
-  --timeline                        Print a simple last-seen timeline
+  --timeline                        Print a chronological event timeline
   --latest-only                     Print only latest secret access and core metrics
   --summary                         Print only a compact summary
   -h, --help                        Show this help
@@ -39,6 +45,9 @@ Examples:
   ./parse_vault.sh ./vault_audit.log --path secret/data/gitlab-lab
   ./parse_vault.sh ./vault_audit.log --path-prefix secret/data/
   ./parse_vault.sh ./vault_audit.log --operation read
+  ./parse_vault.sh ./vault_audit.log --since 2026-03-19T13:00:00Z
+  ./parse_vault.sh ./vault_audit.log --until 2026-03-19T14:00:00Z
+  ./parse_vault.sh ./vault_audit.log --date 2026-03-19
   ./parse_vault.sh ./vault_audit.log --top 10 --timeline
   ./parse_vault.sh ./vault_audit.log --latest-only
   ./parse_vault.sh ./vault_audit.log --format json
@@ -104,6 +113,18 @@ while [[ $# -gt 0 ]]; do
       OPERATION="${2:-}"
       shift 2
       ;;
+    --since)
+      SINCE="${2:-}"
+      shift 2
+      ;;
+    --until)
+      UNTIL="${2:-}"
+      shift 2
+      ;;
+    --date)
+      DATE_ONLY="${2:-}"
+      shift 2
+      ;;
     --top)
       TOP_N="${2:-}"
       shift 2
@@ -148,6 +169,18 @@ if [[ -n "$OPERATION" ]]; then
   esac
 fi
 
+if [[ -n "$DATE_ONLY" && ! "$DATE_ONLY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  fail "--date must be in YYYY-MM-DD format"
+fi
+
+if [[ -n "$SINCE" && ! "$SINCE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+  fail "--since must look like an ISO timestamp, for example 2026-03-19T13:00:00Z"
+fi
+
+if [[ -n "$UNTIL" && ! "$UNTIL" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+  fail "--until must look like an ISO timestamp, for example 2026-03-19T14:00:00Z"
+fi
+
 # Default exclusions when focusing on secrets
 if [[ "$SECRETS_ONLY" == "true" && -z "$EXCLUDE_PATH_PREFIX" ]]; then
   EXCLUDE_PATH_PREFIX="sys/internal/ui/mounts/"
@@ -158,13 +191,19 @@ FILTER_JSON="$(jq -n \
   --arg path_prefix "$PATH_PREFIX" \
   --arg exclude_path_prefix "$EXCLUDE_PATH_PREFIX" \
   --arg secrets_only "$SECRETS_ONLY" \
-  --arg operation "$OPERATION" '
+  --arg operation "$OPERATION" \
+  --arg since "$SINCE" \
+  --arg until "$UNTIL" \
+  --arg date_only "$DATE_ONLY" '
 {
   path_exact: $path_exact,
   path_prefix: $path_prefix,
   exclude_path_prefix: $exclude_path_prefix,
   secrets_only: ($secrets_only == "true"),
-  operation: $operation
+  operation: $operation,
+  since: $since,
+  until: $until,
+  date_only: $date_only
 }
 ')"
 
@@ -198,7 +237,25 @@ IDENTITY_JSON="$(
       )
       and (
         if ($cfg.operation | length) > 0
-        then .request.operation == $cfg.operation
+        then (.request.operation // "") == $cfg.operation
+        else true
+        end
+      )
+      and (
+        if ($cfg.since | length) > 0
+        then (.time // "") >= $cfg.since
+        else true
+        end
+      )
+      and (
+        if ($cfg.until | length) > 0
+        then (.time // "") <= $cfg.until
+        else true
+        end
+      )
+      and (
+        if ($cfg.date_only | length) > 0
+        then ((.time // "") | startswith($cfg.date_only))
         else true
         end
       );
@@ -419,6 +476,9 @@ render_text() {
   printf 'Path prefix            : %s\n' "$(jq -r '.filters.path_prefix // ""' <<< "$IDENTITY_JSON")"
   printf 'Excluded path prefix   : %s\n' "$(jq -r '.filters.exclude_path_prefix // ""' <<< "$IDENTITY_JSON")"
   printf 'Operation              : %s\n' "$(jq -r '.filters.operation // ""' <<< "$IDENTITY_JSON")"
+  printf 'Since                  : %s\n' "$(jq -r '.filters.since // ""' <<< "$IDENTITY_JSON")"
+  printf 'Until                  : %s\n' "$(jq -r '.filters.until // ""' <<< "$IDENTITY_JSON")"
+  printf 'Date                   : %s\n' "$(jq -r '.filters.date_only // ""' <<< "$IDENTITY_JSON")"
   printf '%s\n' ''
 
   if [[ "$TOTAL_EVENTS" == "0" ]]; then
@@ -452,7 +512,6 @@ render_text() {
   if [[ -n "$TOP_N" ]]; then
     printf '%s\n' '🔥 Top Identities by Access Count'
     printf '%s\n' '--------------------------------'
-
     jq -r --argjson top "$TOP_N" '
       .human_identities
       | sort_by(.count)
@@ -461,7 +520,6 @@ render_text() {
       | .[]
       | "\(.count)\t\(.user_login)\t\(.projects[0])"
     ' <<< "$IDENTITY_JSON"
-
     printf '%s\n' ''
   fi
 
@@ -535,12 +593,10 @@ render_text() {
     printf '%s\n' ''
     printf '%s\n' '🕒 Timeline'
     printf '%s\n' '-----------'
-
     jq -r '
       .timeline_events[]
       | "\(.time)\t\(.user_login)\t\(.operation)\tpipeline=\(.pipeline_id)\tjob=\(.job_id)\t\(.path)"
     ' <<< "$IDENTITY_JSON"
-
     printf '%s\n' ''
   fi
 }
@@ -562,6 +618,9 @@ render_md() {
 - **Path prefix:** \`$(jq -r '.filters.path_prefix // ""' <<< "$IDENTITY_JSON")\`
 - **Excluded path prefix:** \`$(jq -r '.filters.exclude_path_prefix // ""' <<< "$IDENTITY_JSON")\`
 - **Operation:** \`$(jq -r '.filters.operation // ""' <<< "$IDENTITY_JSON")\`
+- **Since:** \`$(jq -r '.filters.since // ""' <<< "$IDENTITY_JSON")\`
+- **Until:** \`$(jq -r '.filters.until // ""' <<< "$IDENTITY_JSON")\`
+- **Date:** \`$(jq -r '.filters.date_only // ""' <<< "$IDENTITY_JSON")\`
 
 EOF
 
@@ -570,7 +629,7 @@ EOF
     return
   fi
 
-  if [[ "$(jq -r '.timeline_events | length' <<< "$IDENTITY_JSON")" != "0" ]]; then
+  if [[ "$(jq -r '.timeline_events | map(select(.path | startswith("secret/data/"))) | length' <<< "$IDENTITY_JSON")" != "0" ]]; then
     printf '%s\n' '## Latest Secret Access'
     printf '%s\n' ''
     jq -r '
