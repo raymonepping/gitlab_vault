@@ -16,11 +16,13 @@ LATEST_ONLY="false"
 SINCE=""
 UNTIL=""
 DATE_ONLY=""
+RETRIEVE_AUDIT_FILE=""
 
 usage() {
   cat <<'EOF'
 Usage:
   parse_vault.sh <vault_audit.log> [options]
+  parse_vault.sh --retrieve-audit-file <output_path> [options]
 
 Options:
   --format <text|json|md>           Output format. Default: text
@@ -36,6 +38,7 @@ Options:
   --top <n>                         Show top N human identities by access count
   --timeline                        Print a chronological event timeline
   --latest-only                     Print only latest secret access and core metrics
+  --retrieve-audit-file <path>      Copy /tmp/vault_audit.log from vault-lab and use it as input
   --summary                         Print only a compact summary
   -h, --help                        Show this help
 
@@ -50,6 +53,7 @@ Examples:
   ./parse_vault.sh ./vault_audit.log --date 2026-03-19
   ./parse_vault.sh ./vault_audit.log --top 10 --timeline
   ./parse_vault.sh ./vault_audit.log --latest-only
+  ./parse_vault.sh --retrieve-audit-file ./input/vault_audit.log
   ./parse_vault.sh ./vault_audit.log --format json
   ./parse_vault.sh ./vault_audit.log --format md --output vault_identities.md
   ./parse_vault.sh ./vault_audit.log --secrets-only --summary
@@ -76,8 +80,10 @@ if [[ $# -lt 1 ]]; then
   exit 1
 fi
 
-FILE="$1"
-shift || true
+if [[ "${1:-}" != --* ]]; then
+  FILE="$1"
+  shift || true
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -137,6 +143,10 @@ while [[ $# -gt 0 ]]; do
       LATEST_ONLY="true"
       shift
       ;;
+    --retrieve-audit-file)
+      RETRIEVE_AUDIT_FILE="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -147,6 +157,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -n "$RETRIEVE_AUDIT_FILE" ]]; then
+  FILE="$RETRIEVE_AUDIT_FILE"
+  mkdir -p "$(dirname "$FILE")"
+  docker cp vault-lab:/tmp/vault_audit.log "$FILE"
+fi
+
+[[ -n "$FILE" ]] || fail "Provide a vault audit log file or use --retrieve-audit-file <path>"
 [[ -f "$FILE" ]] || fail "File not found: $FILE"
 
 case "$FORMAT" in
