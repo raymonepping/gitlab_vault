@@ -1,0 +1,41 @@
+services:
+  gitlab:
+    image: gitlab/gitlab-ee:latest
+    container_name: gitlab
+    restart: always
+    hostname: 'gitlab.local'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://gitlab.local:8929'
+        nginx['listen_port'] = 8929
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+    ports:
+      - '8929:8929'
+      - '2222:22'
+      - '8443:443'
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    shm_size: '256m'
+
+  vault:
+    image: hashicorp/vault:1.21.3
+    container_name: vault-lab
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    command: server -dev
+    ports:
+      - "8200:8200"
+    volumes:
+      - vault-data:/vault/file    
+
+volumes:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  vault-data:

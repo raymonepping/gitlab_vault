@@ -1,0 +1,17 @@
+stages:
+  - inspect
+
+inspect_identity:
+  stage: inspect
+  tags:
+    - macos
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: vault
+  script:
+    - echo "== BASIC CI CONTEXT =="
+    - env | grep '^CI_' | sort
+    - echo
+    - echo "== DECODED VAULT_ID_TOKEN =="
+    - TOKEN_PAYLOAD="$(echo "$VAULT_ID_TOKEN" | cut -d '.' -f2 | tr '_-' '/+' | awk '{ l=length($0)%4; if (l==2) printf "%s==\n",$0; else if (l==3) printf "%s=\n",$0; else print $0 }' | base64 -d)"
+    - echo "$TOKEN_PAYLOAD" | jq .

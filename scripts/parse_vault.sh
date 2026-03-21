@@ -17,6 +17,10 @@ SINCE=""
 UNTIL=""
 DATE_ONLY=""
 RETRIEVE_AUDIT_FILE=""
+CONTAINER_ENGINE="${CONTAINER_ENGINE:-docker}"
+VAULT_CONTAINER_NAME="${VAULT_CONTAINER_NAME:-vault-lab}"
+VAULT_AUDIT_PATH="${VAULT_AUDIT_PATH:-/tmp/vault_audit.log}"
+RETRIEVED_AUDIT_FILE_USED=""
 
 usage() {
   cat <<'EOF'
@@ -65,6 +69,12 @@ fail() {
   exit 1
 }
 
+require_value() {
+  local option="$1"
+  local value="${2:-}"
+  [[ -n "$value" && "$value" != --* ]] || fail "$option requires a value"
+}
+
 emit_output() {
   local content="$1"
   if [[ -n "$OUTPUT_FILE" ]]; then
@@ -88,10 +98,12 @@ fi
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --format)
+      require_value "$1" "${2:-}"
       FORMAT="${2:-}"
       shift 2
       ;;
     --output)
+      require_value "$1" "${2:-}"
       OUTPUT_FILE="${2:-}"
       shift 2
       ;;
@@ -104,34 +116,42 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --path)
+      require_value "$1" "${2:-}"
       PATH_EXACT="${2:-}"
       shift 2
       ;;
     --path-prefix)
+      require_value "$1" "${2:-}"
       PATH_PREFIX="${2:-}"
       shift 2
       ;;
     --exclude-path-prefix)
+      require_value "$1" "${2:-}"
       EXCLUDE_PATH_PREFIX="${2:-}"
       shift 2
       ;;
     --operation)
+      require_value "$1" "${2:-}"
       OPERATION="${2:-}"
       shift 2
       ;;
     --since)
+      require_value "$1" "${2:-}"
       SINCE="${2:-}"
       shift 2
       ;;
     --until)
+      require_value "$1" "${2:-}"
       UNTIL="${2:-}"
       shift 2
       ;;
     --date)
+      require_value "$1" "${2:-}"
       DATE_ONLY="${2:-}"
       shift 2
       ;;
     --top)
+      require_value "$1" "${2:-}"
       TOP_N="${2:-}"
       shift 2
       ;;
@@ -144,6 +164,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --retrieve-audit-file)
+      require_value "$1" "${2:-}"
       RETRIEVE_AUDIT_FILE="${2:-}"
       shift 2
       ;;
@@ -159,8 +180,9 @@ done
 
 if [[ -n "$RETRIEVE_AUDIT_FILE" ]]; then
   FILE="$RETRIEVE_AUDIT_FILE"
+  RETRIEVED_AUDIT_FILE_USED="$FILE"
   mkdir -p "$(dirname "$FILE")"
-  docker cp vault-lab:/tmp/vault_audit.log "$FILE"
+  "$CONTAINER_ENGINE" cp "${VAULT_CONTAINER_NAME}:${VAULT_AUDIT_PATH}" "$FILE"
 fi
 
 [[ -n "$FILE" ]] || fail "Provide a vault audit log file or use --retrieve-audit-file <path>"
@@ -226,7 +248,15 @@ FILTER_JSON="$(jq -n \
 
 IDENTITY_JSON="$(
   jq -s \
-    --argjson cfg "$FILTER_JSON" '
+    --argjson cfg "$FILTER_JSON" \
+    --arg source_file "$FILE" \
+    --arg retrieved_audit_file "$RETRIEVED_AUDIT_FILE_USED" '
+    def normalize_time:
+      sub("\\.[0-9]+(?=Z|[+-][0-9]{2}:[0-9]{2}$)"; "");
+
+    def to_epoch_or_null:
+      try (normalize_time | fromdateiso8601) catch null;
+
     def matches($cfg):
       (
         if $cfg.secrets_only
@@ -260,13 +290,27 @@ IDENTITY_JSON="$(
       )
       and (
         if ($cfg.since | length) > 0
-        then (.time // "") >= $cfg.since
+        then (
+          ((.time // "") | to_epoch_or_null) as $event_time
+          | ($cfg.since | to_epoch_or_null) as $since_time
+          | if ($event_time == null or $since_time == null)
+            then false
+            else $event_time >= $since_time
+            end
+        )
         else true
         end
       )
       and (
         if ($cfg.until | length) > 0
-        then (.time // "") <= $cfg.until
+        then (
+          ((.time // "") | to_epoch_or_null) as $event_time
+          | ($cfg.until | to_epoch_or_null) as $until_time
+          | if ($event_time == null or $until_time == null)
+            then false
+            else $event_time <= $until_time
+            end
+        )
         else true
         end
       )
@@ -300,7 +344,17 @@ IDENTITY_JSON="$(
       }
     ) as $events
     | {
+        schema_version: "1.0",
+        generated_at: (now | todateiso8601),
+        source_file: $source_file,
+        retrieved_audit_file: (
+          if ($retrieved_audit_file | length) > 0
+          then $retrieved_audit_file
+          else null
+          end
+        ),
         filters: $cfg,
+
         total_events: ($events | length),
         read_events: (
           $events | map(select(.operation == "read")) | length
@@ -309,6 +363,43 @@ IDENTITY_JSON="$(
           $events
           | map(select(.operation == "read" and (.path | startswith("secret/data/"))))
           | length
+        ),
+        total_secret_paths: (
+          $events
+          | map(select(.path | startswith("secret/data/")) | .path)
+          | unique
+          | length
+        ),
+        latest_secret_access: (
+          $events
+          | map(select(.path | startswith("secret/data/")))
+          | sort_by(.time)
+          | last // null
+        ),
+        top_path: (
+          $events
+          | group_by(.path)
+          | map({
+              path: .[0].path,
+              count: length
+            })
+          | sort_by(.count, .path)
+          | reverse
+          | .[0] // { path: "", count: 0 }
+        ),
+        secret_paths: (
+          $events
+          | map(select(.path | startswith("secret/data/")))
+          | sort_by(.path, .time)
+          | group_by(.path)
+          | map({
+              path: .[0].path,
+              count: length,
+              first_seen: (map(.time) | sort | first),
+              last_seen: (map(.time) | sort | last)
+            })
+          | sort_by(.count, .path)
+          | reverse
         ),
         timeline_events: (
           $events
@@ -451,12 +542,7 @@ TOTAL_EVENTS="$(jq -r '.total_events' <<< "$IDENTITY_JSON")"
 render_text() {
   local latest_event=""
 
-  latest_event="$(jq -r '
-    .timeline_events
-    | map(select(.path | startswith("secret/data/")))
-    | sort_by(.time)
-    | last
-  ' <<< "$IDENTITY_JSON")"
+  latest_event="$(jq -r '.latest_secret_access' <<< "$IDENTITY_JSON")"
 
   printf '%s\n' ''
   printf '%s\n' '🔎 VAULT IDENTITY INVENTORY'
@@ -484,6 +570,9 @@ render_text() {
   printf 'Total secret read events   : %s\n' "$(jq -r '.secret_read_events' <<< "$IDENTITY_JSON")"
   printf 'Unique human identities    : %s\n' "$(jq -r '.unique_humans' <<< "$IDENTITY_JSON")"
   printf 'Unique workload identities : %s\n' "$(jq -r '.unique_workloads' <<< "$IDENTITY_JSON")"
+  printf 'Top path                   : %s (%s)\n' \
+    "$(jq -r '.top_path.path' <<< "$IDENTITY_JSON")" \
+    "$(jq -r '.top_path.count' <<< "$IDENTITY_JSON")"
   printf '%s\n' ''
 
   printf '%s\n' 'Applied Filters'
@@ -627,6 +716,7 @@ render_md() {
 - **Total secret read events:** \`$(jq -r '.secret_read_events' <<< "$IDENTITY_JSON")\`
 - **Unique human identities:** \`$(jq -r '.unique_humans' <<< "$IDENTITY_JSON")\`
 - **Unique workload identities:** \`$(jq -r '.unique_workloads' <<< "$IDENTITY_JSON")\`
+- **Top path:** \`$(jq -r '.top_path.path' <<< "$IDENTITY_JSON")\` (\`$(jq -r '.top_path.count' <<< "$IDENTITY_JSON")\`)
 
 ## Applied Filters
 
@@ -646,14 +736,11 @@ EOF
     return
   fi
 
-  if [[ "$(jq -r '.timeline_events | map(select(.path | startswith("secret/data/"))) | length' <<< "$IDENTITY_JSON")" != "0" ]]; then
+  if [[ "$(jq -r '.latest_secret_access != null' <<< "$IDENTITY_JSON")" == "true" ]]; then
     printf '%s\n' '## Latest Secret Access'
     printf '%s\n' ''
     jq -r '
-      .timeline_events
-      | map(select(.path | startswith("secret/data/")))
-      | sort_by(.time)
-      | last
+      .latest_secret_access
       | "- **User:** `\(.user_login)`\n"
         + "  - **Email:** `\(.user_email)`\n"
         + "  - **Project:** `\(.project_path)`\n"

@@ -16,14 +16,25 @@ trap cleanup EXIT
 usage() {
   cat <<'EOF'
 Usage:
-  parse_vault_ci.sh <gitlab_log_file> [--accessor <vault_token_accessor>] [--format text|json|md] [--output <file>]
+  parse_gitlab.sh <gitlab_log_file> [--accessor <vault_token_accessor>] [--format text|json|md] [--output <file>]
 
 Examples:
-  ./parse_vault_ci.sh ./input/gitlab.log
-  ./parse_vault_ci.sh ./input/gitlab.log --accessor eabJKPNZhWKVpyLxkMuw6AUB
-  ./parse_vault_ci.sh ./input/gitlab.log --accessor eabJKPNZhWKVpyLxkMuw6AUB --format md
-  ./parse_vault_ci.sh ./input/gitlab.log --format json --output report.json
+  ./parse_gitlab.sh ./input/gitlab.log
+  ./parse_gitlab.sh ./input/gitlab.log --accessor eabJKPNZhWKVpyLxkMuw6AUB
+  ./parse_gitlab.sh ./input/gitlab.log --accessor eabJKPNZhWKVpyLxkMuw6AUB --format md
+  ./parse_gitlab.sh ./input/gitlab.log --format json --output report.json
 EOF
+}
+
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+require_value() {
+  local option="$1"
+  local value="${2:-}"
+  [[ -n "$value" && "$value" != --* ]] || fail "$option requires a value"
 }
 
 if [[ $# -lt 1 ]]; then
@@ -37,14 +48,17 @@ shift || true
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --accessor)
+      require_value "$1" "${2:-}"
       ACCESSOR="${2:-}"
       shift 2
       ;;
     --format)
+      require_value "$1" "${2:-}"
       FORMAT="${2:-text}"
       shift 2
       ;;
     --output)
+      require_value "$1" "${2:-}"
       OUTPUT_FILE="${2:-}"
       shift 2
       ;;
@@ -53,9 +67,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Unknown argument: $1"
-      usage
-      exit 1
+      fail "Unknown argument: $1"
       ;;
   esac
 done
@@ -63,14 +75,12 @@ done
 case "$FORMAT" in
   text|json|md) ;;
   *)
-    echo "Invalid format: $FORMAT"
-    exit 1
+    fail "Invalid format: $FORMAT"
     ;;
 esac
 
 if [[ ! -f "$INPUT_FILE" ]]; then
-  echo "Input file not found: $INPUT_FILE"
-  exit 1
+  fail "Input file not found: $INPUT_FILE"
 fi
 
 # Strip ANSI escape codes and GitLab timestamp/prefix noise
@@ -123,8 +133,7 @@ VAULT_METADATA="$(extract_json_after_marker "VAULT AUTH METADATA")"
 SECRET_DATA="$(extract_json_after_marker "READ SECRET")"
 
 if ! printf '%s\n' "$VAULT_METADATA" | jq . >/dev/null 2>&1; then
-  echo "Could not extract Vault metadata from GitLab log"
-  exit 1
+  fail "Could not extract Vault metadata from GitLab log"
 fi
 
 # GitLab-side parsed values
@@ -153,10 +162,16 @@ VT_META_PIPELINE=""
 VT_META_JOB=""
 VT_META_REF=""
 VT_ROLE=""
+VAULT_LOOKUP_ATTEMPTED="false"
+VAULT_LOOKUP_SUCCEEDED="false"
+VAULT_LOOKUP_STATUS="not_requested"
 
 if [[ -n "$ACCESSOR" ]]; then
+  VAULT_LOOKUP_ATTEMPTED="true"
   if command -v vault >/dev/null 2>&1; then
     if vault token lookup -format=json -accessor "$ACCESSOR" > "$TMP_VAULT" 2>/dev/null; then
+      VAULT_LOOKUP_SUCCEEDED="true"
+      VAULT_LOOKUP_STATUS="ok"
       VAULT_LOOKUP_JSON="$(cat "$TMP_VAULT")"
       VT_DISPLAY="$(safe_jq '.data.display_name' "$VAULT_LOOKUP_JSON")"
       VT_ENTITY_ID="$(safe_jq '.data.entity_id' "$VAULT_LOOKUP_JSON")"
@@ -171,12 +186,19 @@ if [[ -n "$ACCESSOR" ]]; then
       VT_META_JOB="$(safe_jq '.data.meta.job_id' "$VAULT_LOOKUP_JSON")"
       VT_META_REF="$(safe_jq '.data.meta.ref' "$VAULT_LOOKUP_JSON")"
       VT_ROLE="$(safe_jq '.data.meta.role' "$VAULT_LOOKUP_JSON")"
+    else
+      VAULT_LOOKUP_STATUS="lookup_failed"
     fi
+  else
+    VAULT_LOOKUP_STATUS="vault_cli_not_found"
   fi
 fi
 
 # Build unified JSON document
 REPORT_JSON="$(jq -n \
+  --arg schema_version "1.0" \
+  --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+  --arg source_file "$INPUT_FILE" \
   --arg gl_user "$GL_USER" \
   --arg gl_email "$GL_EMAIL" \
   --arg gl_user_id "$GL_USER_ID" \
@@ -200,8 +222,14 @@ REPORT_JSON="$(jq -n \
   --arg vt_meta_job "$VT_META_JOB" \
   --arg vt_meta_ref "$VT_META_REF" \
   --arg vt_role "$VT_ROLE" \
+  --arg vault_lookup_attempted "$VAULT_LOOKUP_ATTEMPTED" \
+  --arg vault_lookup_succeeded "$VAULT_LOOKUP_SUCCEEDED" \
+  --arg vault_lookup_status "$VAULT_LOOKUP_STATUS" \
   --argjson secret "$(printf '%s\n' "$SECRET_DATA" | jq -c . 2>/dev/null || echo 'null')" \
   '{
+    schema_version: $schema_version,
+    generated_at: $generated_at,
+    source_file: $source_file,
     gitlab: {
       human_identity: {
         user: $gl_user,
@@ -222,6 +250,9 @@ REPORT_JSON="$(jq -n \
     vault: (
       if $accessor == "" then null
       else {
+        lookup_attempted: ($vault_lookup_attempted == "true"),
+        lookup_succeeded: ($vault_lookup_succeeded == "true"),
+        lookup_status: $vault_lookup_status,
         accessor: $accessor,
         display_name: $vt_display,
         path: $vt_path,

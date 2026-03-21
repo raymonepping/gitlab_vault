@@ -1,0 +1,266 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-03-21T17:01:27Z",
+  "source_file": "./input/vault_audit_3.log",
+  "retrieved_audit_file": null,
+  "filters": {
+    "path_exact": "",
+    "path_prefix": "",
+    "exclude_path_prefix": "sys/internal/ui/mounts/",
+    "secrets_only": true,
+    "operation": "",
+    "since": "",
+    "until": "",
+    "date_only": ""
+  },
+  "total_events": 2,
+  "read_events": 2,
+  "secret_read_events": 2,
+  "total_secret_paths": 1,
+  "latest_secret_access": {
+    "time": "2026-03-19T15:33:13.477904295Z",
+    "path": "secret/data/gitlab-lab",
+    "operation": "read",
+    "display_name": "jwt-repping@gmail.com",
+    "entity_id": "ab9dde39-c4cd-adab-b415-8d0c7ebe2e84",
+    "role": "gitlab-vault-jwt-lab",
+    "user_login": "raymon",
+    "user_email": "repping@gmail.com",
+    "user_id": "3",
+    "project_path": "root/vault-jwt-lab",
+    "namespace_path": "root",
+    "pipeline_id": "3",
+    "job_id": "7",
+    "ref": "main"
+  },
+  "top_path": {
+    "path": "secret/data/gitlab-lab",
+    "count": 2
+  },
+  "secret_paths": [
+    {
+      "path": "secret/data/gitlab-lab",
+      "count": 2,
+      "first_seen": "2026-03-19T13:29:09.954946259Z",
+      "last_seen": "2026-03-19T15:33:13.477904295Z"
+    }
+  ],
+  "timeline_events": [
+    {
+      "time": "2026-03-19T13:29:09.954946259Z",
+      "user_login": "root",
+      "user_email": "gitlab_admin_726ef0@example.com",
+      "project_path": "root/vault-jwt-lab",
+      "pipeline_id": "3",
+      "job_id": "6",
+      "ref": "main",
+      "role": "gitlab-vault-jwt-lab",
+      "path": "secret/data/gitlab-lab",
+      "operation": "read",
+      "display_name": "jwt-gitlab_admin_726ef0@example.com",
+      "entity_id": "417d9475-9b67-7790-2053-24c20f42d641"
+    },
+    {
+      "time": "2026-03-19T15:33:13.477904295Z",
+      "user_login": "raymon",
+      "user_email": "repping@gmail.com",
+      "project_path": "root/vault-jwt-lab",
+      "pipeline_id": "3",
+      "job_id": "7",
+      "ref": "main",
+      "role": "gitlab-vault-jwt-lab",
+      "path": "secret/data/gitlab-lab",
+      "operation": "read",
+      "display_name": "jwt-repping@gmail.com",
+      "entity_id": "ab9dde39-c4cd-adab-b415-8d0c7ebe2e84"
+    }
+  ],
+  "unique_humans": 2,
+  "unique_workloads": 2,
+  "human_identities": [
+    {
+      "count": 1,
+      "user_login": "raymon",
+      "user_email": "repping@gmail.com",
+      "user_id": "3",
+      "display_names": [
+        "jwt-repping@gmail.com"
+      ],
+      "entity_ids": [
+        "ab9dde39-c4cd-adab-b415-8d0c7ebe2e84"
+      ],
+      "roles": [
+        "gitlab-vault-jwt-lab"
+      ],
+      "projects": [
+        "root/vault-jwt-lab"
+      ],
+      "namespaces": [
+        "root"
+      ],
+      "refs": [
+        "main"
+      ],
+      "pipelines": [
+        "3"
+      ],
+      "jobs": [
+        "7"
+      ],
+      "paths": [
+        "secret/data/gitlab-lab"
+      ],
+      "operations": [
+        "read"
+      ],
+      "first_seen": "2026-03-19T15:33:13.477904295Z",
+      "last_seen": "2026-03-19T15:33:13.477904295Z"
+    },
+    {
+      "count": 1,
+      "user_login": "root",
+      "user_email": "gitlab_admin_726ef0@example.com",
+      "user_id": "1",
+      "display_names": [
+        "jwt-gitlab_admin_726ef0@example.com"
+      ],
+      "entity_ids": [
+        "417d9475-9b67-7790-2053-24c20f42d641"
+      ],
+      "roles": [
+        "gitlab-vault-jwt-lab"
+      ],
+      "projects": [
+        "root/vault-jwt-lab"
+      ],
+      "namespaces": [
+        "root"
+      ],
+      "refs": [
+        "main"
+      ],
+      "pipelines": [
+        "3"
+      ],
+      "jobs": [
+        "6"
+      ],
+      "paths": [
+        "secret/data/gitlab-lab"
+      ],
+      "operations": [
+        "read"
+      ],
+      "first_seen": "2026-03-19T13:29:09.954946259Z",
+      "last_seen": "2026-03-19T13:29:09.954946259Z"
+    }
+  ],
+  "workload_identities": [
+    {
+      "count": 1,
+      "project_path": "root/vault-jwt-lab",
+      "namespace_path": "root",
+      "pipeline_id": "3",
+      "job_id": "6",
+      "ref": "main",
+      "role": "gitlab-vault-jwt-lab",
+      "display_names": [
+        "jwt-gitlab_admin_726ef0@example.com"
+      ],
+      "entity_ids": [
+        "417d9475-9b67-7790-2053-24c20f42d641"
+      ],
+      "users": [
+        {
+          "user_login": "root",
+          "user_email": "gitlab_admin_726ef0@example.com",
+          "user_id": "1"
+        }
+      ],
+      "paths": [
+        "secret/data/gitlab-lab"
+      ],
+      "operations": [
+        "read"
+      ],
+      "first_seen": "2026-03-19T13:29:09.954946259Z",
+      "last_seen": "2026-03-19T13:29:09.954946259Z"
+    },
+    {
+      "count": 1,
+      "project_path": "root/vault-jwt-lab",
+      "namespace_path": "root",
+      "pipeline_id": "3",
+      "job_id": "7",
+      "ref": "main",
+      "role": "gitlab-vault-jwt-lab",
+      "display_names": [
+        "jwt-repping@gmail.com"
+      ],
+      "entity_ids": [
+        "ab9dde39-c4cd-adab-b415-8d0c7ebe2e84"
+      ],
+      "users": [
+        {
+          "user_login": "raymon",
+          "user_email": "repping@gmail.com",
+          "user_id": "3"
+        }
+      ],
+      "paths": [
+        "secret/data/gitlab-lab"
+      ],
+      "operations": [
+        "read"
+      ],
+      "first_seen": "2026-03-19T15:33:13.477904295Z",
+      "last_seen": "2026-03-19T15:33:13.477904295Z"
+    }
+  ],
+  "full_identity_bundles": [
+    {
+      "count": 1,
+      "display_name": "jwt-gitlab_admin_726ef0@example.com",
+      "entity_id": "417d9475-9b67-7790-2053-24c20f42d641",
+      "role": "gitlab-vault-jwt-lab",
+      "user_login": "root",
+      "user_email": "gitlab_admin_726ef0@example.com",
+      "user_id": "1",
+      "project_path": "root/vault-jwt-lab",
+      "namespace_path": "root",
+      "pipeline_id": "3",
+      "job_id": "6",
+      "ref": "main",
+      "paths": [
+        "secret/data/gitlab-lab"
+      ],
+      "operations": [
+        "read"
+      ],
+      "first_seen": "2026-03-19T13:29:09.954946259Z",
+      "last_seen": "2026-03-19T13:29:09.954946259Z"
+    },
+    {
+      "count": 1,
+      "display_name": "jwt-repping@gmail.com",
+      "entity_id": "ab9dde39-c4cd-adab-b415-8d0c7ebe2e84",
+      "role": "gitlab-vault-jwt-lab",
+      "user_login": "raymon",
+      "user_email": "repping@gmail.com",
+      "user_id": "3",
+      "project_path": "root/vault-jwt-lab",
+      "namespace_path": "root",
+      "pipeline_id": "3",
+      "job_id": "7",
+      "ref": "main",
+      "paths": [
+        "secret/data/gitlab-lab"
+      ],
+      "operations": [
+        "read"
+      ],
+      "first_seen": "2026-03-19T15:33:13.477904295Z",
+      "last_seen": "2026-03-19T15:33:13.477904295Z"
+    }
+  ]
+}
