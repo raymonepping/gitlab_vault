@@ -92,7 +92,7 @@ const filterPills = computed(() => {
   font-size: clamp(2.75rem, 4.6vw, 4.8rem);
   line-height: 0.95;
   letter-spacing: -0.055em;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--text-primary);
 }
 
