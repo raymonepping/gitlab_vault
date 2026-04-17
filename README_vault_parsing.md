@@ -1,86 +1,98 @@
 # Vault Audit Parsing Guide
 
-This document explains how to use the Vault audit parsing script in this repository:
+This guide explains how to use the Vault audit parsing script in this repository:
 
 - [scripts/parse_vault.sh](/Users/raymon.epping/Documents/VSC/Personal/gitlab_vault/scripts/parse_vault.sh)
 
-It is written for two audiences:
+It is intended for both:
 
-- application owners who want to understand who accessed secrets and from where
-- engineers who want to run the tool, filter the data, and generate reports
+- technical readers who need to run the parser and work with the output
+- non-technical readers who want to understand what the report is telling them
 
-## What This Tool Does
+## Purpose
 
-The parser reads Vault audit log files and turns raw line-by-line JSON events into a structured identity report.
+Vault audit logs are detailed, but they are difficult to read directly. This script turns raw Vault audit events into a structured report that shows:
 
-In practical terms, it helps answer questions like:
-
-- who accessed a secret
-- when that access happened
-- whether the request came from a human user or an automated workload
-- which GitLab project, pipeline, job, and ref were involved
-- which Vault entity IDs and auth methods were used
-- whether the same user appears under multiple identities
+- who accessed Vault
+- which secret paths were touched
+- when the access happened
+- whether the request came from a human user or a workload
+- which GitLab project, pipeline, job, and ref were involved when that data exists
 
 This is useful for:
 
-- security reviews
-- audit conversations
-- troubleshooting unexpected secret access
-- explaining access patterns to non-technical stakeholders
+- incident review
+- audit preparation
+- access validation
+- workshop demonstrations
+- stakeholder reporting
 
-## Important Note About The File Name
+## What The Script Supports
 
-The file is named `parse_vault.sh`, but it is actually a Python 3 script.
+The current script is a Bash-based parser with support for:
 
-That means:
+- local log file parsing
+- multiple input files in one run
+- rotated log retrieval from a Vault container
+- plain text, JSON, and Markdown output
+- path and time filtering
+- summary and timeline views
+- redaction modes for safer sharing
 
-- you can execute it directly if it is marked executable
-- or you can run it with `python3`
+## Input Sources
 
-Examples:
+The parser can work from two different sources:
 
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log
-```
+1. Local files you already have on disk
+2. Audit log files copied directly from the Vault container
 
-```bash
-python3 ./scripts/parse_vault.sh ./input/vault_audit.log
-```
+It also supports rotated log collections, not just the active audit log.
 
-## What The Script Produces
+## Output Formats
 
-The script builds a normalized identity dataset from Vault audit records and can render it in three formats:
+The script can generate:
 
-- `text`: terminal-friendly report
+- `text`: shell-friendly human-readable output
 - `json`: machine-readable structured output
-- `md`: Markdown report for documentation and sharing
+- `md`: Markdown report suitable for documentation or sharing
 
-The output includes:
+## Typical Questions It Helps Answer
 
-- overall event counts
-- latest secret access
-- top paths and top secret paths
-- human identities
-- workload identities
-- identity correlations
-- identity lifecycle information
-- optional drift findings
-- optional event timeline
+For application owners:
 
-## Typical Use Cases
+- Which application or team accessed a secret?
+- Did access happen recently?
+- Was the access tied to a known pipeline or job?
+- Are there signs of inconsistent identity usage?
 
-### 1. Quick Terminal Review
+For engineers:
 
-Use this when you want a fast human-readable summary in the shell.
+- Which Vault entity ID was used?
+- Which auth path or workload context was involved?
+- Which paths were read most often?
+- Are the same users appearing under multiple identities?
+- Which rotated log files were included in the report?
+
+## Basic Usage
+
+### Parse One Local Log File
 
 ```bash
 ./scripts/parse_vault.sh ./input/vault_audit.log
 ```
 
-### 2. Generate A Markdown Report
+### Parse Several Local Files
 
-Use this when you want a shareable report for documentation, review, or handoff.
+This is useful when you already copied rotated logs to disk.
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  ./input/vault_audit.log.1 \
+  ./input/vault_audit.log.2.gz
+```
+
+### Write Markdown Output To A File
 
 ```bash
 ./scripts/parse_vault.sh \
@@ -89,9 +101,7 @@ Use this when you want a shareable report for documentation, review, or handoff.
   --output ./output/report.md
 ```
 
-### 3. Generate JSON For Dashboards Or Automation
-
-Use this when another tool or UI will consume the parsed data.
+### Write JSON Output To A File
 
 ```bash
 ./scripts/parse_vault.sh \
@@ -100,19 +110,23 @@ Use this when another tool or UI will consume the parsed data.
   --output ./output/report.json
 ```
 
-### 4. Focus Only On Secret Reads
+## Container Retrieval
 
-Use this when you want to ignore internal Vault UI and mount lookups and focus on actual secret activity.
+### List The Audit Files The Script Can See
+
+Use this first when you want to confirm which files exist in the Vault container.
 
 ```bash
-./scripts/parse_vault.sh \
-  ./input/vault_audit.log \
-  --secrets-only
+./scripts/parse_vault.sh --list-audit-files
 ```
 
-### 5. Retrieve The Audit Log Directly From The Vault Container
+You can also set the runtime explicitly:
 
-Use this when the audit file is inside the container and you want the script to copy it first.
+```bash
+./scripts/parse_vault.sh --list-audit-files --runtime podman
+```
+
+### Retrieve The Active Audit File
 
 ```bash
 ./scripts/parse_vault.sh \
@@ -121,55 +135,95 @@ Use this when the audit file is inside the container and you want the script to 
   --output ./output/report.md
 ```
 
-By default, retrieval uses:
+### Retrieve All Matching Audit Files, Including Rotated Files
 
-- container engine: `docker`
-- container name: `gitlab-vault`
-- audit path: `/tmp/vault_audit.log`
-
-You can override those with environment variables:
-
-- `CONTAINER_ENGINE`
-- `VAULT_CONTAINER_NAME`
-- `VAULT_AUDIT_PATH`
-
-Example:
+This is the best option when you want the report to include the full available audit history from the container, not just the active log.
 
 ```bash
-CONTAINER_ENGINE=podman \
-VAULT_CONTAINER_NAME=gitlab-vault \
-VAULT_AUDIT_PATH=/tmp/vault_audit.log \
-./scripts/parse_vault.sh --retrieve-audit-file ./input/vault_audit.log
+./scripts/parse_vault.sh \
+  --retrieve-all-audit-files \
+  --input ./input \
+  --output ./output/report.md \
+  --format md
 ```
 
-## Filters
-
-The parser supports several filters so you can narrow the analysis to the activity you care about.
-
-### Path Filters
-
-Exact path:
+You can also pass the destination directory inline:
 
 ```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --path secret/data/gitlab-lab
+./scripts/parse_vault.sh \
+  --retrieve-all-audit-files ./input \
+  --output ./output/report.md \
+  --format md
 ```
 
-Path prefix:
+### What The Summary Means
+
+When retrieval is used, the script prints a summary like:
+
+- `Report:` where the final output was written
+- `Used log file(s):` the local files actually parsed
+- `Retrieved from container path(s):` the original file locations inside the Vault container
+
+That makes it clear which rotated files were included in the final report.
+
+## Runtime Detection
+
+The script supports:
+
+- `docker`
+- `podman`
+- `auto`
+
+By default it uses `auto`, which tries to detect the working container runtime.
+
+You can override that:
 
 ```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --path-prefix secret/data/
+./scripts/parse_vault.sh --list-audit-files --runtime podman
 ```
 
-Exclude a path prefix:
+## Common Filters
+
+### Secrets Only
+
+Use this when you want to focus on actual secret access and ignore Vault internal UI and mount lookups.
 
 ```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --exclude-path-prefix sys/internal/ui/mounts/
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --secrets-only
+```
+
+### Exact Secret Path
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --path secret/data/gitlab-lab
+```
+
+### Path Prefix
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --path-prefix secret/data/
+```
+
+### Exclude A Path Prefix
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --exclude-path-prefix sys/internal/ui/mounts/
 ```
 
 ### Operation Filter
 
 ```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --operation read
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --operation read
 ```
 
 Supported operations are:
@@ -183,239 +237,131 @@ Supported operations are:
 
 ### Time Filters
 
-From a point in time:
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --since 2026-03-19T13:00:00Z
-```
-
-Up to a point in time:
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --until 2026-03-19T14:00:00Z
-```
-
-Specific UTC date:
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --date 2026-03-19
-```
-
-## Reporting Modes
-
-### `--summary`
-
-Shows a compact identity summary instead of the full report.
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --summary
-```
-
-### `--latest-only`
-
-Shows the latest secret access and core metrics only.
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --latest-only
-```
-
-### `--timeline`
-
-Adds a chronological timeline of matching events.
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --timeline
-```
-
-### `--top`
-
-Shows the top N human identities by access count.
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --top 10
-```
-
-### `--detect-drift`
-
-Adds drift findings, such as users tied to multiple entity IDs or entities linked to multiple users.
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --detect-drift
-```
-
-### `--explain`
-
-Adds more narrative output in text mode to help explain findings.
-
-```bash
-./scripts/parse_vault.sh ./input/vault_audit.log --explain
-```
-
-## Redaction Options
-
-The script can redact identity and path information before writing the report.
-
-This is useful when:
-
-- sharing reports outside engineering
-- presenting examples in workshops or demos
-- avoiding exposure of usernames, emails, entity IDs, or secret paths
-
-### Pseudonymized Redaction
-
-Replaces sensitive values with stable labels such as `Human-1` or `Entity-2`.
+Since a timestamp:
 
 ```bash
 ./scripts/parse_vault.sh \
   ./input/vault_audit.log \
-  --redact \
-  --redact-mode pseudo \
-  --format md
+  --since 2026-03-19T13:00:00Z
+```
+
+Until a timestamp:
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --until 2026-03-19T14:00:00Z
+```
+
+Only one UTC date:
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --date 2026-03-19
+```
+
+## Report Modes
+
+### Compact Summary
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --summary
+```
+
+### Latest Access Only
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --latest-only
+```
+
+### Timeline
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --timeline
+```
+
+### Top N Identities
+
+```bash
+./scripts/parse_vault.sh \
+  ./input/vault_audit.log \
+  --top 10
+```
+
+## Redaction
+
+Redaction is useful when you want to share a report more broadly without exposing usernames, emails, entity IDs, or exact secret paths.
+
+### Pseudonymized Redaction
+
+This keeps relationships intact while replacing sensitive values with stable labels.
+
+```bash
+./scripts/parse_vault.sh \
+  --retrieve-all-audit-files \
+  --input ./input \
+  --output ./output/report.md \
+  --format md \
+  --redact-mode pseudo
 ```
 
 ### Masked Redaction
 
-Keeps partial structure while hiding most of the value.
+This keeps some structure but partially hides the original values.
 
 ```bash
 ./scripts/parse_vault.sh \
   ./input/vault_audit.log \
-  --redact-mode mask \
-  --format md
+  --format md \
+  --redact-mode mask
 ```
 
 ### Strict Redaction
 
-Replaces sensitive fields with `[redacted]`.
+This replaces sensitive values with `[redacted]`.
 
 ```bash
 ./scripts/parse_vault.sh \
   ./input/vault_audit.log \
-  --redact-mode strict \
-  --format md
+  --format md \
+  --redact-mode strict
 ```
 
-Note:
+## Practical Examples
 
-- if `--redact-mode` is set to `mask` or `strict`, redaction is automatically enabled
-
-## Input Expectations
-
-The script expects Vault audit logs where each line is a JSON object.
-
-It supports:
-
-- normal text log files
-- `.gz` compressed log files
-- multiple files in one run
-
-Example with multiple files:
+### Stakeholder-Friendly Markdown Report
 
 ```bash
 ./scripts/parse_vault.sh \
-  ./input/vault_audit.log \
-  ./input/vault_audit.log.1 \
-  ./input/vault_audit.log.2.gz
-```
-
-The script reads all supplied files and treats them as one dataset for analysis.
-
-## How Identity Correlation Works
-
-The parser extracts fields from Vault audit records such as:
-
-- `display_name`
-- `entity_id`
-- `user_login`
-- `user_email`
-- `user_id`
-- `role`
-- `project_path`
-- `namespace_path`
-- `pipeline_id`
-- `job_id`
-- `ref`
-- `path`
-- `operation`
-- `time`
-
-It then groups those records into several views:
-
-- human identities
-- workload identities
-- full identity bundles
-- correlations by entity ID
-- identity lifecycle records
-
-This makes it easier to understand both:
-
-- who the actor was
-- what execution context they were operating in
-
-## What Non-Technical Readers Should Focus On
-
-If you are reading the report as an application owner or manager, the most useful sections are usually:
-
-- total audit events
-- latest secret access
-- top secret path
-- human identities
-- workload identities
-- drift findings
-
-Those sections usually answer:
-
-- was a secret accessed
-- by whom
-- from which system context
-- whether anything looks inconsistent
-
-## What Engineers Should Focus On
-
-If you are reading the report as an engineer, the most useful sections are usually:
-
-- applied filters
-- identity correlations
-- full identity bundles
-- timeline
-- drift findings
-- redact mode used
-
-Those sections help with:
-
-- verifying Vault auth behavior
-- tracing GitLab-to-Vault workload activity
-- checking entity consistency
-- identifying ambiguous or inconsistent identity mapping
-
-## Example End-To-End Commands
-
-### Markdown Report For Stakeholders
-
-```bash
-./scripts/parse_vault.sh \
-  ./input/vault_audit.log \
+  --retrieve-all-audit-files \
+  --input ./input \
+  --output ./output/report.md \
+  --format md \
   --secrets-only \
   --summary \
-  --redact \
-  --redact-mode pseudo \
-  --format md \
-  --output ./output/vault_report.md
+  --redact-mode pseudo
 ```
 
-### Detailed JSON For Engineering Analysis
+### Engineering Investigation Across Rotated Logs
 
 ```bash
 ./scripts/parse_vault.sh \
-  ./input/vault_audit.log \
-  --secrets-only \
-  --timeline \
-  --detect-drift \
+  --retrieve-all-audit-files \
+  --input ./input \
   --format json \
-  --output ./output/vault_report.json
+  --output ./output/report.json \
+  --timeline \
+  --top 10
 ```
 
-### Focus On One Secret Path During A Time Window
+### Focus On One Secret During A Defined Window
 
 ```bash
 ./scripts/parse_vault.sh \
@@ -423,47 +369,65 @@ Those sections help with:
   --path secret/data/gitlab-lab \
   --since 2026-03-19T13:00:00Z \
   --until 2026-03-19T14:00:00Z \
-  --timeline
+  --format md
 ```
 
-## Operational Notes
+## Important Operational Notes
 
-- The script only parses files you explicitly provide, unless `--retrieve-audit-file` is used.
-- Invalid JSON lines are skipped silently.
-- Only records of type `request` are included in the analysis.
-- Records without usable auth display name or metadata are skipped.
-- `--secrets-only` automatically excludes `sys/internal/ui/mounts/` unless you set a different exclusion prefix.
-- Output directories are created automatically when `--output` is used.
+- `--retrieve-all-audit-files` is the feature that handles rotated Vault logs automatically.
+- `--retrieve-audit-file` copies only one audit log file.
+- `--input` is used only with `--retrieve-all-audit-files`.
+- The script creates output directories when needed.
+- The script supports compressed `.gz` files when they are already local input files.
+- `--detect-drift` and `--explain` are present in the CLI, but the help text marks them as reserved for future support. Do not treat them as mature report features in this version.
+
+## Recommended Workflow
+
+For non-technical review:
+
+1. Retrieve all audit files.
+2. Filter to `--secrets-only`.
+3. Use `--summary`.
+4. Use `--redact-mode pseudo`.
+5. Write the report as Markdown.
+
+For engineering review:
+
+1. Run `--list-audit-files`.
+2. Retrieve all audit files into `./input`.
+3. Generate JSON for deeper analysis.
+4. Generate Markdown for documentation.
+5. Re-run with narrower path or time filters if needed.
 
 ## Troubleshooting
 
-### No Matching Audit Events Found
-
-Common reasons:
-
-- the file path is wrong
-- the file is empty
-- the selected filters are too strict
-- the log does not contain matching `request` events
-
-### Container Retrieval Fails
+### No Files Found In The Container
 
 Check:
 
-- the container engine value, for example `docker` or `podman`
+- the container runtime
 - the Vault container name
-- the audit path inside the container
-- whether you can run the equivalent `cp` command manually
+- the audit path configured in Vault
 
-### Markdown Report Looks Sparse
+Start with:
 
-This usually means:
+```bash
+./scripts/parse_vault.sh --list-audit-files
+```
 
-- `--summary` or `--latest-only` was used
-- the filters reduced the event set heavily
-- redaction removed most human-readable detail
+### The Report Is Empty
 
-## File Reference
+Common reasons:
 
-- Script: [scripts/parse_vault.sh](/Users/raymon.epping/Documents/VSC/Personal/gitlab_vault/scripts/parse_vault.sh)
+- the wrong log files were used
+- the selected filters are too narrow
+- the logs do not contain matching request events
+
+### The Report Does Not Include Older Activity
+
+This usually means only the active log was parsed. Use `--retrieve-all-audit-files` instead of `--retrieve-audit-file`.
+
+## Related Files
+
+- Parser: [scripts/parse_vault.sh](/Users/raymon.epping/Documents/VSC/Personal/gitlab_vault/scripts/parse_vault.sh)
 - Project README: [README.md](/Users/raymon.epping/Documents/VSC/Personal/gitlab_vault/README.md)
